@@ -1,0 +1,269 @@
+---
+title: "Dnmt1_differential_expression_analysis"
+author: "Kaan Okay"
+date: "10/30/2023"
+output: html_document
+---
+
+#### Loading packages
+
+```{r, message=FALSE}
+library(DESeq2)
+library(pheatmap)
+library(edgeR)
+library(Glimma)
+library(ggplot2)
+library(EnhancedVolcano)
+library(data.table)
+library(htmlwidgets)
+library(grDevices)
+```
+
+#### Uploading expression matrix from featureCounts
+
+```{r, message=FALSE}
+expression_matrix <- read.delim("featureCounts.txt", header = T, row.names = 1)
+```
+
+#### Number of total genes presented in expression matrix
+
+```{r}
+nrow(expression_matrix)
+```
+
+#### Keep only mouse protein-coding genes
+#### Get gene types from NCBI
+#### NCBI > Gene > Download/FTP > DATA > gene_info.gz
+#### Download from: "https://ftp.ncbi.nih.gov/gene/DATA/gene_info.gz"
+#### Note that this file contains info for all genes/species
+#### Taxanomy ID of Mus musculus is 10090
+#### Taxanomy ID of Homo sapiens is 9606
+
+```{r, message=FALSE}
+protein_coding_genes <- fread("mouse_protein_coding_gene_list.txt")
+```
+
+#### Get number of protein-coding genes
+```{r, message=FALSE}
+nrow(protein_coding_genes)
+```
+
+#### Look at protein-coding genes
+
+```{r}
+head(protein_coding_genes)
+```
+
+#### Obtain raw expression values of protein-coding genes
+
+```{r, message=FALSE}
+expression_matrix_of_protein_coding_genes <- subset(expression_matrix,rownames(expression_matrix) %in% protein_coding_genes$x)
+```
+
+#### Number of protein-coding genes in the count matrix
+
+```{r, message=FALSE}
+nrow(expression_matrix_of_protein_coding_genes)
+```
+
+#### Keep the sample and gene lenght columns
+
+```{r,message=FALSE}
+expression_matrix_of_protein_coding_genes <- expression_matrix_of_protein_coding_genes[, c(5:17)]
+```
+
+#### Look at matrix
+
+```{r, message=FALSE}
+head(expression_matrix_of_protein_coding_genes)
+```
+
+#### Keep gene length for CPM-level normalization (total number of bases of all exons in each gene, i.e., cDNA-level gene length calculation from featureCounts)
+
+```{r}
+gene_length <- expression_matrix_of_protein_coding_genes$Length
+```
+
+#### Look at structure of gene_length vector
+
+```{r}
+str(gene_length)
+```
+
+#### Remove gene length column
+
+```{r}
+expression_matrix_of_protein_coding_genes <- expression_matrix_of_protein_coding_genes[, -1]
+```
+
+#### Look at matrix
+
+```{r, message=FALSE}
+head(expression_matrix_of_protein_coding_genes)
+```
+
+#### Keep only Dnmt1 samples
+
+```{r}
+expression_matrix_of_protein_coding_genes <- expression_matrix_of_protein_coding_genes[,c(1:8)]
+```
+
+```{r}
+head(expression_matrix_of_protein_coding_genes)
+```
+#### Calculate library size of each sample (total number of reads in each sample)
+
+```{r}
+library_size <- colSums(expression_matrix_of_protein_coding_genes)
+```
+
+```{r}
+print(library_size)
+```
+
+#### Create a meta data annotating samples in the expression matrix respect to column order of samples
+
+```{r}
+group <- factor(c("Control", "Control", "Control", "Control", "Dnmt1", "Dnmt1", "Dnmt1", "Dnmt1"))
+group <- relevel(group, "Control")
+```
+
+#### Look at group vector
+
+```{r}
+print(group)
+```
+
+#### Do CPM normalization by taking account gene length and library size in the expression matrix through cpm() function of the R package edgeR
+
+
+```{r, message=FALSE}
+CPM_normalized_expression_values <- cpm(expression_matrix_of_protein_coding_genes, lib.size = library_size, gene.length = gene_length, group = group)
+```
+
+#### Look at CPM-level count matrix
+
+```{r}
+head(CPM_normalized_expression_values)
+nrow(CPM_normalized_expression_values)
+```
+
+#### Keep genes with > 1 CPM
+#### Row-wise filtration is performed in expression data to eliminate genes with low expression across samples. 
+#### Low expressed genes may cause statistical noise and create a bias in results.
+
+```{r}
+CPM_cutoff <- 1
+filtered_expression_data <- CPM_normalized_expression_values[apply(CPM_normalized_expression_values,1,function(x){max(x)}) > CPM_cutoff,]
+```
+
+#### Look at how many genes left upon filtering
+
+```{r}
+nrow(filtered_expression_data)
+```
+
+#### Obtain raw expression values of genes with > 1 CPM for DESeq2 DE analysis
+
+```{r}
+filtered_expression_data_2 <- subset(expression_matrix_of_protein_coding_genes, rownames(expression_matrix_of_protein_coding_genes) %in% rownames(filtered_expression_data))
+```
+
+#### Look at count matrix of raw expression values
+
+```{r}
+head(filtered_expression_data_2)
+```
+
+```{r}
+nrow(filtered_expression_data_2)
+```
+
+#### Sample-trait annotation
+
+```{r}
+sampleInfo <- data.frame(group, row.names = colnames(filtered_expression_data_2))
+print(sampleInfo)
+```
+
+
+### Differential expression analysis:
+
+#### Step 1
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = filtered_expression_data_2, colData = sampleInfo, design = ~ group)
+```
+
+#### Step 2
+
+```{r}
+dds$group = relevel(dds$group, "Control")
+```
+
+#### Step 3
+
+```{r, message=FALSE}
+dds <- DESeq(dds)
+```
+
+#### Step 4
+
+```{r}
+DE_results <- results(dds)
+head(DE_results)
+```
+#### Get differentially expressed genes with < 0.05 padj
+
+```{r}
+DEGs <- subset(DE_results, padj < 0.05)
+nrow(DEGs)
+```
+
+#### Histogram plot of non-adjusted pvalues to control robustness and reliability of differential expression analysis
+
+```{r}
+hist(DE_results$pvalue)
+```
+
+#### The MA plot from DESeq2' plotMA() function
+
+```{r}
+DESeq2::plotMA(DE_results, ylim=c(-3,10), alpha = 0.05, colSig = "#d95f02", colNonSig = "#7570b3")
+```
+
+#### Alternative MA plot through glimmaMA() function
+
+```{r}
+MA_plot <- glimmaMA(dds)
+```
+
+#### Label differentially expressed genes on volcano plot. FC cutoff is 1, adj pvalue cutoff is 0.05 (i.e., 5e-2)
+
+```{r}
+EnhancedVolcano(DE_results,
+                lab = rownames(DE_results),
+                x = 'log2FoldChange',
+                y = 'padj',
+                ylab = bquote(~ -Log[10]~ 'adj pvalue'),
+                title = "Dnmt1 DEGs", 
+                FCcutoff = 1,
+                pCutoff = 5e-2, # padj < 0.05
+                col = c("#808080", "#d95f02", "#cab2d6", "#7570b3"),
+                colAlpha = 2,
+                drawConnectors = TRUE,
+                widthConnectors = 0.5,
+                colConnectors = 'red',
+                labSize = 6.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = TRUE,
+                selectLab = c("Ksr1",
+                              "Gnas",
+                              "Smc4",
+                              "Stn1",
+                              "Sh3pxd2a",
+                              "Pcbp1",
+                              "Trim59",
+                              "Armcx6"))
+```
