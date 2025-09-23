@@ -22,7 +22,7 @@ library(grDevices)
 #### Uploading expression matrix from featureCounts
 
 ```{r, message=FALSE}
-expression_matrix <- read.delim("featureCounts.txt", header = T, row.names = 1)
+expression_matrix <- read.delim("featureCounts.neurodevelopment.txt", header = T, row.names = 1)
 ```
 
 #### Number of total genes presented in expression matrix
