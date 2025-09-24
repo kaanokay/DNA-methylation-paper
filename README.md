@@ -107,6 +107,14 @@ DEGs <- subset(DE_results, padj < 0.05)
 ### methylation count is a given sample from modkit looks like this:
 
 ```{R}
+# loading libraries
+library(locfit)
+library(dmrseq)
+library(BiocParallel)
+library(rtracklayer)
+```
+
+```{R}
 Dnmt1 <- fread("Dnmt1.bed", nThread = 32)
 ```
 
@@ -126,14 +134,6 @@ head(Dnmt1)
 | chr10 | 3100272 | 3100273 | m    | 9   | .   | 3100272 | 3100273 | 255,0,0 | 9  | 100.00 | 9  | 0  | 0  | 0  | 1  | 0  | 1  |
 | chr10 | 3100440 | 3100441 | h    | 9   | .   | 3100440 | 3100441 | 255,0,0 | 9  | 11.11  | 1  | 4  | 4  | 0  | 2  | 0  | 0  |
 | chr10 | 3100440 | 3100441 | m    | 9   | .   | 3100440 | 3100441 | 255,0,0 | 9  | 44.44  | 4  | 4  | 1  | 0  | 2  | 0  | 0  |
-
-```{R}
-# loading libraries
-library(locfit)
-library(dmrseq)
-library(BiocParallel)
-library(rtracklayer)
-```
 
 ```{R}
 # Generation of BSseq object for given sample
