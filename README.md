@@ -104,8 +104,6 @@ DEGs <- subset(DE_results, padj < 0.05)
 
 ### Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession id GSE308669.
 
-### methylation count is a given sample from modkit looks like this:
-
 ```{R}
 # loading libraries
 library(locfit)
@@ -114,9 +112,13 @@ library(BiocParallel)
 library(rtracklayer)
 ```
 
+### Reading methylation count from modkit in R
+
 ```{R}
 Dnmt1 <- fread("Dnmt1.bed", nThread = 32)
 ```
+
+### methylation count is a given sample from modkit looks like this:
 
 ```{R}
 head(Dnmt1)
