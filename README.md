@@ -106,7 +106,7 @@ library(rtracklayer)
 
 Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession id GSE308669.
 
-| chr   | start   | end     | type | val | dot | start2  | end2    | color   | n  | score  | c1 | c2 | c3 | c4 | c5 | c6 | c7 |
+| chr   | start   | end     | modified_base_code | score | strand | tstart  | tend    | color   | Nvalid_cov  | Nmod_/_Nvalid_cov  | Nmod | Ncanonical | Nother_mod | Ndelete | Nfail | Ndiff | Nnocall |
 |-------|---------|---------|------|-----|-----|---------|---------|---------|----|--------|----|----|----|----|----|----|----|
 | chr10 | 3100021 | 3100022 | h    | 10  | .   | 3100021 | 3100022 | 255,0,0 | 10 | 0.00   | 0  | 3  | 7  | 0  | 0  | 0  | 0  |
 | chr10 | 3100021 | 3100022 | m    | 10  | .   | 3100021 | 3100022 | 255,0,0 | 10 | 70.00  | 7  | 3  | 0  | 0  | 0  | 0  | 0  |
