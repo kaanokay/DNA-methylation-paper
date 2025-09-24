@@ -35,4 +35,29 @@ For instance, raw gene-level counts of Dnmt1_1 sample is in GSM9235598_Dnmt1_1.r
 | 1810013L24Rik    | 1803   |
 | Srsf7    | 2790   |
 
+### Once other samples are downloaded, a raw count matrix can be generated in R:
+
+files <- list.files(path = "/path/to/raw.counts", pattern = "\\.txt$", full.names = TRUE)
+
+tables <- lapply(files, function(f) {
+  read.table(f, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+})
+
+merged.raw.counts <- Reduce(function(x, y) merge(x, y, by = "Gene.symbol"), tables)
+
+head(merged.raw.counts)
+
+| Gene.symbol   | Dnmt1_1 | Dnmt1_2 |
+|---------------|---------|---------|
+| 0610005C13Rik |      14 |      17 |
+| 0610009B22Rik |     291 |     353 |
+| 0610009E02Rik |      17 |      24 |
+| 0610009L18Rik |      91 |      95 |
+| 0610010F05Rik |    1155 |    1205 |
+| 0610010K14Rik |     817 |    1133 |
+
+
 # Analysis of Dnmt1 knockout methylation data
+
+
+
