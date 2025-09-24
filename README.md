@@ -102,6 +102,8 @@ DEGs <- subset(DE_results, padj < 0.05)
 ```
 # Analysis of Dnmt1 knockout (unphased) methylation data
 
+Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession id GSE308669.
+
 ```{R}
 # loading libraries
 library(locfit)
@@ -109,8 +111,6 @@ library(dmrseq)
 library(BiocParallel)
 library(rtracklayer)
 ```
-
-Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession id GSE308669.
 
 | chr   | start   | end     | modified_base_code | score | strand | tstart  | tend    | color   | Nvalid_cov  | Nmod_/_Nvalid_cov  | Nmod | Ncanonical | Nother_mod | Ndelete | Nfail | Ndiff | Nnocall |
 |-------|---------|---------|------|-----|-----|---------|---------|---------|----|--------|----|----|----|----|----|----|----|
