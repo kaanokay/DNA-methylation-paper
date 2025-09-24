@@ -14,7 +14,7 @@ For instance, raw gene-level counts of Dnmt1_1 sample is in GSM9235598_Dnmt1_1.r
 | 1810013L24Rik    | 1803   |
 | Srsf7    | 2790   |
 
-### Once other samples are downloaded, a raw count matrix can be generated in R:
+### Once other samples are downloaded, a raw count matrix can be generated in R, where rownames are gene symbols but columns are samples.
 
 ```{R}
 files <- list.files(path = "/path/to/raw.counts", pattern = "\\.txt$", full.names = TRUE)
@@ -43,7 +43,58 @@ head(merged.raw.counts)
 | 0610010F05Rik |    1155 |    1205 |    1122 |    1125 |   1444 |   1426 |   1776 |   1148 |
 | 0610010K14Rik |     817 |    1133 |     913 |    1045 |   1106 |   1619 |   1421 |   1056 |
 
+### Calculate library size of each sample
 
+```{R}
+library_size <- colSums(merged.raw.counts)
+```
+
+### Create a meta data annotating samples in the expression matrix respect to column order of samples
+
+```{R}
+group <- factor(c("Dnmt1", "Dnmt1", "Dnmt1", "Dnmt1", "Control", "Control", "Control", "Control"))
+group <- relevel(group, "Control")
+```
+
+### Do CPM normalization by taking account library size in the expression matrix through cpm() function of the R package edgeR
+
+```{R}
+CPM_normalized_expression_values <- cpm(merged.raw.counts, lib.size = library_size, group = group)
+```
+
+### Keep genes with > 1 CPM
+
+```{R}
+CPM_cutoff <- 1
+filtered_expression_data <- CPM_normalized_expression_values[apply(CPM_normalized_expression_values,1,function(x){max(x)}) > CPM_cutoff,]
+```
+
+### Obtain raw expression values of genes with > 1 CPM for DESeq2 DE analysis
+
+```{R}
+filtered_expression_data_2 <- subset(merged.raw.counts, rownames(merged.raw.counts) %in% rownames(filtered_expression_data))
+```
+
+### Sample-trait annotation
+
+```{R}
+sampleInfo <- data.frame(group, row.names = colnames(filtered_expression_data_2))
+```
+
+### Differential expression analysis
+
+```{R}
+dds <- DESeqDataSetFromMatrix(countData = filtered_expression_data_2, colData = sampleInfo, design = ~ group)
+dds$group = relevel(dds$group, "Control")
+dds <- DESeq(dds)
+DE_results <- results(dds)
+```
+
+### Get differentially expressed genes with < 0.05 padj
+
+```{R}
+DEGs <- subset(DE_results, padj < 0.05)
+```
 # Analysis of Dnmt1 knockout methylation data
 
 
