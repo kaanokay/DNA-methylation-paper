@@ -17,6 +17,11 @@ For instance, raw gene-level counts of Dnmt1_1 sample is in GSM9235598_Dnmt1_1.r
 ### Once other samples are downloaded, a raw count matrix can be generated in R, where rownames are gene symbols but columns are samples.
 
 ```{R}
+library("DESeq2")
+library("edgeR")
+```
+
+```{R}
 files <- list.files(path = "/path/to/raw.counts", pattern = "\\.txt$", full.names = TRUE)
 ```
 
@@ -98,6 +103,7 @@ DEGs <- subset(DE_results, padj < 0.05)
 # Analysis of Dnmt1 knockout (unphased) methylation data
 
 ```{R}
+# loading libraries
 library(locfit)
 library(dmrseq)
 library(BiocParallel)
@@ -120,6 +126,7 @@ Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession i
 | chr10 | 3100440 | 3100441 | m    | 9   | .   | 3100440 | 3100441 | 255,0,0 | 9  | 44.44  | 4  | 4  | 1  | 0  | 2  | 0  | 0  |
 
 ```{R}
+# Generation of BSseq object for given sample
 Dnmt1 <- fread("Dnmt1.bed", nThread = 32)
 colnames(Dnmt1) <- c("chrom", "start", "end", "modified_base_code", "score", "strand", "tstart", "tend", "color", "Nvalid_cov", "Nmod_/_Nvalid_cov", "Nmod", "Ncanonical", "Nother_mod", "Ndelete", "Nfail", "Ndiff", "Nnocall")
 Dnmt1 <- subset(Dnmt1, Dnmt1$modified_base_code == "m")
