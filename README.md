@@ -102,14 +102,16 @@ DEGs <- subset(DE_results, padj < 0.05)
 ```
 # Analysis of Dnmt1 knockout (unphased) methylation data
 
-Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession id GSE308669.
+### Dnmt1 knockout long-read WGS sequencing data is deposit at GEO under accession id GSE308669.
+
+### methylation count is a given sample from modkit looks like this:
 
 ```{R}
-# loading libraries
-library(locfit)
-library(dmrseq)
-library(BiocParallel)
-library(rtracklayer)
+Dnmt1 <- fread("Dnmt1.bed", nThread = 32)
+```
+
+```{R}
+head(Dnmt1)
 ```
 
 | chr   | start   | end     | modified_base_code | score | strand | tstart  | tend    | color   | Nvalid_cov  | Nmod_/_Nvalid_cov  | Nmod | Ncanonical | Nother_mod | Ndelete | Nfail | Ndiff | Nnocall |
@@ -126,14 +128,16 @@ library(rtracklayer)
 | chr10 | 3100440 | 3100441 | m    | 9   | .   | 3100440 | 3100441 | 255,0,0 | 9  | 44.44  | 4  | 4  | 1  | 0  | 2  | 0  | 0  |
 
 ```{R}
+# loading libraries
+library(locfit)
+library(dmrseq)
+library(BiocParallel)
+library(rtracklayer)
+```
+
+```{R}
 # Generation of BSseq object for given sample
-Dnmt1 <- fread("Dnmt1.bed", nThread = 32)
-colnames(Dnmt1) <- c("chrom", "start", "end", "modified_base_code", "score", "strand", "tstart", "tend", "color", "Nvalid_cov", "Nmod_/_Nvalid_cov", "Nmod", "Ncanonical", "Nother_mod", "Ndelete", "Nfail", "Ndiff", "Nnocall")
 Dnmt1 <- subset(Dnmt1, Dnmt1$modified_base_code == "m")
 Dnmt1.BSSeq.object <- BSseq(chr = as.character(Dnmt1$chrom), pos = Dnmt1$start +1, M = matrix(Dnmt1$Nmod), Cov = matrix(Dnmt1$Nmod + Dnmt1$Ncanonical), sampleNames = c("Dnmt1"))
 sampleNames(Dnmt1.BSSeq.object) <- "Dnmt1"
 ```
-
-
-
-
