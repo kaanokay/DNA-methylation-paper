@@ -1,10 +1,10 @@
-# Dowloading expression and methylation data from GEO
+## Analysis gene expression and DNA methylation datasets from "Shared molecular consequences of epigenetic machinery disruption in neuronal progenitors" (doi: https://doi.org/10.1101/2025.09.12.675897).
 
-# Analysis of Dnmt1 knockout expression data
+## Analysis of Dnmt1 knockout expression data
 
-Dnmt1 knockout short-read RNA sequencing data is deposit at GEO under accession id GSE308011.
+### Dnmt1 knockout short-read RNA sequencing data is deposit at GEO under accession id GSE308011.
 
-For instance, raw gene-level counts of Dnmt1_1 sample is in GSM9235598_Dnmt1_1.raw.counts.txt.gz file. First five rows of that data look like this:
+### For instance, raw gene-level counts of Dnmt1_1 sample is in GSM9235598_Dnmt1_1.raw.counts.txt.gz file. First five rows of that data look like this:
 
 | Gene symbol | Dnmt1_1 |
 |----------|----------|
