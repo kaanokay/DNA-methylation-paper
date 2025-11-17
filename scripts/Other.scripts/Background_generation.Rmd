@@ -2,7 +2,7 @@
 title: "DMR_downsampling_bg_matching"
 author: "KatrínM"
 date: "2025-11-07"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -260,7 +260,7 @@ build_matched_bg_simple <- function(top_bed3,
 
 ```
 
-#Now run it
+## Now run it
 ```{r}
 
 summ <- build_matched_bg_simple(
@@ -275,7 +275,7 @@ summ <- build_matched_bg_simple(
 ```
 
 
-#Test GC CONTENT, CpG density ETC. between the two datasets
+## Test GC CONTENT, CpG density ETC. between the two datasets
 ```{r}
 suppressPackageStartupMessages({
   library(rtracklayer)
@@ -369,7 +369,7 @@ if ("ggplot2" %in% .packages()) {
 ```
 
 
-#test if any overlapping in the background occurs:
+## test if any overlapping in the background occurs:
 ```{r}
 suppressPackageStartupMessages({
   library(rtracklayer)
