@@ -1,0 +1,417 @@
+---
+title: "DMR_downsampling_bg_matching"
+author: "KatrínM"
+date: "2025-11-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#I need background genomic regions that do not contain the DNmt1-DMRs, but are of similar length and density
+Asked ChatGPT to help me out
+
+##1.Write a function that will downsample the DMR list based on absolute_descending dIF values (column 8 in the DMR file)
+```{r}
+
+library(data.table)
+
+top30k_abs_bed <- function(in_path,
+                           out_path = "top30k.bed",
+                           n = 30000,
+                           score_col,
+                           sep = "\t") {
+  # Read the BED-like file (no header)
+  dt <- fread(in_path, sep = sep, header = FALSE, data.table = TRUE, showProgress = TRUE)
+  stopifnot(score_col >= 1, score_col <= ncol(dt))
+  
+  x <- dt[[score_col]]
+  if (!is.numeric(x)) {
+    x <- suppressWarnings(as.numeric(x))
+  }
+  if (all(is.na(x))) stop(sprintf("Column V%d is not numeric (or all NA).", score_col))
+  
+  # Order by absolute value of score, descending
+  ord <- order(abs(x), decreasing = TRUE, na.last = TRUE)
+  
+  # Select top n rows
+  n_eff <- min(n, nrow(dt))
+  topdt <- dt[ord][seq_len(n_eff)]
+  
+  # Write to output file (tab-delimited, no header)
+  fwrite(topdt, out_path, sep = "\t", col.names = FALSE)
+  message(sprintf("Wrote top 30,000 rows (by |score|) to %s.", out_path))
+  invisible(topdt)
+}
+
+
+```
+
+#now run it
+```{r}
+top <- top30k_abs_bed(
+  in_path  = "Dnmt1.unphased.significant.DMRs.filtered.2.bed",
+  out_path = "Dnmt1.top30k.absDelta-b.bed",
+  n = 30000,
+  score_col = 8,          # change if your Δmethylation is a different column
+)
+```
+
+# -------------------------------------------------------------------------
+# Save a 3-column BED (chr, start, end) for downstream matching
+# -------------------------------------------------------------------------
+```{r}
+dt <- fread("Dnmt1.top30k.absDelta-b.bed", sep = "\t", header = FALSE)
+bed3 <- dt[, .(V1, V2, V3)]
+fwrite(bed3, "Dnmt1.top30k.3col-B.bed", sep = "\t", col.names = FALSE)
+
+message("Saved 3-column BED: Dnmt1.top30k.3col-B.bed")
+```
+# -------------------------------------------------------------------------
+# Generate a matched background
+Now I need to generate a background in the mm10 genome that is size and CpG-density matched to these top 30K DMRs, does not include duplicated or overlapping regions and is not found in the full DMR list
+# -------------------------------------------------------------------------
+```{r}
+# Per-chrom, 2D (CpG + GC) matching with shared scaling
+# — preserves per-chrom counts and tightens composition match
+
+suppressPackageStartupMessages({
+  library(rtracklayer)
+  library(GenomicRanges)
+  library(Biostrings)
+  library(BSgenome.Mmusculus.UCSC.mm10)
+  library(regioneR)
+  library(GenomeInfoDb)
+})
+
+mm10 <- BSgenome.Mmusculus.UCSC.mm10
+
+read_bed3 <- function(path) {
+  gr <- import(path, format = "BED")
+  seqlevelsStyle(gr) <- "UCSC"
+  gr <- keepStandardChromosomes(gr, pruning.mode = "coarse")
+  seqlengths(gr) <- seqlengths(mm10)[seqlevels(gr)]
+  gr
+}
+
+cpg_per_kb <- function(gr) {
+  dna <- getSeq(mm10, gr)
+  as.numeric(vcountPattern("CG", dna, fixed = TRUE)) / width(gr) * 1000
+}
+gc_frac <- function(gr) {
+  dna <- getSeq(mm10, gr)
+  as.numeric(letterFrequency(dna, c("G","C"))[,1] + letterFrequency(dna, c("G","C"))[,2]) / width(gr)
+}
+
+.fit_scaler <- function(v){
+  m <- median(v, na.rm=TRUE)
+  s <- mad(v, constant=1.4826, na.rm=TRUE); if (!is.finite(s) || s==0) s <- sd(v, na.rm=TRUE)
+  list(m=m, s=ifelse(is.finite(s) && s>0, s, 1))
+}
+.apply_scaler <- function(v,p) (v - p$m) / p$s
+
+# 2D (CpG, GC) greedy pick within a width bin, avoiding overlaps and reuse
+.pick_group_2d <- function(top_idx, pool_idx, Xtop, Xpool, pool_gr, selected_gr){
+  chosen <- integer(0)
+  used <- logical(length(pool_gr))
+  # order queries by CpG to stabilize choices
+  q <- top_idx[order(Xtop[top_idx,1])]
+  for (ti in q){
+    cand <- pool_idx[!used[pool_idx]]
+    if (!length(cand)) break
+    # squared Euclidean distance in (CpG, GC)
+    d <- rowSums((t(Xpool[cand,,drop=FALSE]) - Xtop[ti,])^2)
+    for (cj in cand[order(d)]){
+      if (length(selected_gr)==0L || length(subsetByOverlaps(pool_gr[cj], selected_gr))==0L){
+        chosen <- c(chosen, cj)
+        used[cj] <- TRUE
+        selected_gr <- c(selected_gr, pool_gr[cj])
+        break
+      }
+    }
+  }
+  list(chosen=chosen, selected_gr=selected_gr)
+}
+
+build_matched_bg_simple <- function(top_bed3,
+                                    all_dmrs_bed3,
+                                    out_bed = "Dnmt1.top30k.bg_matched.mm10.bed",
+                                    seed = 42,
+                                    pool_factor = 20,      # bigger default
+                                    max_extra_batches = 40, # auto-growth cap
+                                    verbose = TRUE){
+  set.seed(seed)
+  top <- read_bed3(top_bed3)
+  all_dmrs <- read_bed3(all_dmrs_bed3)
+  if (!length(top)) stop("Top BED is empty after cleaning.")
+  if (!length(all_dmrs)) stop("All-DMR BED is empty after cleaning.")
+
+  mask_all <- reduce(c(all_dmrs, top))
+
+  if (verbose) message("Generating initial candidate pool ...")
+  make_pool_once <- function(){
+    randomizeRegions(
+      A = top,
+      genome = mm10,
+      allow.overlaps = TRUE,     # <- allow in the POOL
+      per.chromosome = TRUE,
+      mask = mask_all
+    )
+  }
+  pool <- do.call(c, replicate(pool_factor, make_pool_once(), simplify=FALSE))
+  pool <- unique(pool)
+  pool <- subsetByOverlaps(pool, mask_all, invert=TRUE)
+
+  if (verbose) message("Computing features (CpG, GC) ...")
+  top_cpg <- cpg_per_kb(top);  top_gc <- gc_frac(top)
+  pool_cpg <- cpg_per_kb(pool); pool_gc <- gc_frac(pool)
+
+  # shared scaling from pool
+  sc_cpg <- .fit_scaler(pool_cpg); sc_gc <- .fit_scaler(pool_gc)
+  Xtop  <- cbind(.apply_scaler(top_cpg,  sc_cpg), .apply_scaler(top_gc,  sc_gc))
+  Xpool <- cbind(.apply_scaler(pool_cpg, sc_cpg), .apply_scaler(pool_gc, sc_gc))
+
+  chroms <- intersect(seqlevelsInUse(top), seqlevelsInUse(pool))
+  selected <- GRanges()
+  chosen_idx <- integer(0)
+
+  # helper to ensure enough candidates for a (chr,width) bin via auto growth
+  ensure_bin <- function(chr, w, need){
+    added <- 0L; tries <- 0L
+    repeat{
+      pool_chr <- which(as.character(seqnames(pool))==chr)
+      pool_w   <- width(pool)
+      have <- sum(pool_chr %in% which(pool_w==w))
+      if (have >= need*2L || tries >= max_extra_batches) break
+      # grow pool by batches
+      grown <- make_pool_once()
+      grown <- subsetByOverlaps(grown, mask_all, invert=TRUE)
+      pool  <<- unique(c(pool, grown))
+      # update features incrementally
+      pool_cpg <<- c(pool_cpg, cpg_per_kb(grown))
+      pool_gc  <<- c(pool_gc,  gc_frac(grown))
+      Xpool    <<- rbind(Xpool,
+                         cbind(.apply_scaler(tail(pool_cpg, length(grown)), sc_cpg),
+                               .apply_scaler(tail(pool_gc,  length(grown)), sc_gc)))
+      tries <- tries + 1L
+      added <- added + length(grown)
+      if (verbose && tries %% 5 == 0) message(sprintf("  Expanded pool (+%d) for %s width=%d; now have ~%d", 
+                                                      added, chr, w, have))
+    }
+  }
+
+  if (verbose) message("Matching per chromosome and per width ...")
+  for (chr in chroms){
+    top_chr_idx  <- which(as.character(seqnames(top))==chr)
+    pool_chr_idx <- which(as.character(seqnames(pool))==chr)
+    if (!length(top_chr_idx) || !length(pool_chr_idx)) next
+
+    w_top <- width(top)[top_chr_idx]
+    uw <- sort(unique(w_top))
+
+    for (w in uw){
+      t_idx <- top_chr_idx[w_top==w]
+      need  <- length(t_idx)
+      ensure_bin(chr, w, need)
+
+      pool_chr_idx  <- which(as.character(seqnames(pool))==chr)  # refresh after growth
+      w_pool <- width(pool)
+      p_idx <- intersect(pool_chr_idx, which(w_pool==w))
+      if (!length(p_idx)) next
+
+      pick <- .pick_group_2d(
+        top_idx = t_idx, pool_idx = p_idx,
+        Xtop = Xtop, Xpool = Xpool,
+        pool_gr = pool, selected_gr = selected
+      )
+      if (length(pick$chosen) < need && verbose){
+        message(sprintf("Placed %d/%d for %s width=%d; consider raising pool_factor or max_extra_batches.",
+                        length(pick$chosen), need, chr, w))
+      }
+      if (length(pick$chosen)){
+        chosen_idx <- c(chosen_idx, pick$chosen)
+        selected   <- pick$selected_gr
+      }
+    }
+  }
+
+  bg <- sort(pool[unique(chosen_idx)])
+  # final guards
+  bg <- subsetByOverlaps(bg, mask_all, invert=TRUE)
+  # no internal overlaps by construction, but check anyway:
+  if (length(reduce(bg)) != length(bg)) {
+    warning("Background still has internal overlaps; raise pool_factor / max_extra_batches.")
+    # Keep a non-overlapping subset to be safe
+    keep <- logical(length(bg)); sel <- GRanges()
+    for (i in seq_along(bg)){
+      if (length(subsetByOverlaps(bg[i], sel))==0L){ keep[i]<-TRUE; sel <- c(sel, bg[i]) }
+    }
+    bg <- bg[keep]
+  }
+  if (length(bg) > length(top)) bg <- bg[seq_len(length(top))]
+  if (length(bg) < length(top)) warning(sprintf("BG has %d (< %d). Increase pool_factor.", length(bg), length(top)))
+
+  export(bg, out_bed, format="BED")
+  if (verbose) message(sprintf("Wrote %d background regions to %s", length(bg), out_bed))
+  invisible(list(n_top=length(top), n_bg=length(bg)))
+}
+
+
+```
+
+#Now run it
+```{r}
+
+summ <- build_matched_bg_simple(
+  top_bed3      = "Dnmt1.top30k.3col-B.bed",
+  all_dmrs_bed3 = "C:/Users/kmoller/OneDrive - Menntaský/Documents/Post-doc application/Kaan/Dnmt1.unphased.significant.DMRs.filtered.2_3col.bed",
+  out_bed       = "Dnmt1.top30k.bg_matched.mm10.bed",
+  seed          = 42,
+  pool_factor   = 30,       # good starting point
+  max_extra_batches = 100
+)
+
+```
+
+
+#Test GC CONTENT, CpG density ETC. between the two datasets
+```{r}
+suppressPackageStartupMessages({
+  library(rtracklayer)
+  library(GenomicRanges)
+  library(Biostrings)
+  library(BSgenome.Mmusculus.UCSC.mm10)
+  library(GenomeInfoDb)
+  # optional for quick plots
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    message("Install ggplot2 for plots: install.packages('ggplot2')")
+  } else {
+    library(ggplot2)
+  }
+})
+
+mm10 <- BSgenome.Mmusculus.UCSC.mm10
+
+# Read a 3-col BED and standardize to UCSC mm10
+read_bed3 <- function(path) {
+  gr <- import(path, format = "BED")
+  seqlevelsStyle(gr) <- "UCSC"
+  gr <- keepStandardChromosomes(gr, pruning.mode = "coarse")
+  seqlengths(gr) <- seqlengths(mm10)[seqlevels(gr)]
+  gr
+}
+
+# Metrics
+cpg_per_kb <- function(gr) {
+  dna <- getSeq(mm10, gr)
+  as.numeric(vcountPattern("CG", dna, fixed = TRUE)) / width(gr) * 1000
+}
+gc_frac <- function(gr) {
+  dna <- getSeq(mm10, gr)
+  # fraction of bases that are G or C
+  freqs <- letterFrequency(dna, letters = c("G","C"))
+  as.numeric(rowSums(freqs)) / width(gr)
+}
+
+# ---- Run on your files ----
+# Update these paths as needed
+bed_top <- "Dnmt1.top30k.3col-B.bed"          # your 30K DMRs (3-col)
+bed_bg  <- "Dnmt1.top30k.bg_matched.mm10.bed" # your 30K background (3-col)
+
+top <- read_bed3(bed_top)
+bg  <- read_bed3(bed_bg)
+
+# Compute metrics
+top_cpg <- cpg_per_kb(top);  bg_cpg <- cpg_per_kb(bg)
+top_gc  <- gc_frac(top);     bg_gc  <- gc_frac(bg)
+
+# Summaries
+message(sprintf("Top: n=%d | BG: n=%d", length(top), length(bg)))
+message("CpG per kb (Top):"); print(summary(top_cpg))
+message("CpG per kb (BG): "); print(summary(bg_cpg))
+message("GC fraction (Top):"); print(summary(top_gc))
+message("GC fraction (BG): "); print(summary(bg_gc))
+
+# KS tests (non-parametric distribution comparison)
+ks_cpg <- suppressWarnings(ks.test(top_cpg, bg_cpg))
+ks_gc  <- suppressWarnings(ks.test(top_gc,  bg_gc))
+message(sprintf("KS p-value (CpG/kb): %g", ks_cpg$p.value))
+message(sprintf("KS p-value (GC frac): %g", ks_gc$p.value))
+
+# Optional: quick plots if ggplot2 is available
+if ("ggplot2" %in% .packages()) {
+  df <- data.frame(
+    value = c(top_cpg, bg_cpg),
+    set   = rep(c("Top", "BG"), c(length(top_cpg), length(bg_cpg))),
+    metric= "CpG_per_kb"
+  )
+  p1 <- ggplot(df, aes(value, color=set)) + geom_density() +
+        labs(title="CpG per kb", x="CpG/kb", y="Density")
+  print(p1)
+
+  df2 <- data.frame(
+    value = c(top_gc, bg_gc),
+    set   = rep(c("Top", "BG"), c(length(top_gc), length(bg_gc))),
+    metric= "GC_fraction"
+  )
+  p2 <- ggplot(df2, aes(value, color=set)) + geom_density() +
+        labs(title="GC fraction", x="GC fraction", y="Density")
+  print(p2)
+}
+
+# (Optional) Save metrics to TSVs for downstream checks
+#write.table(data.frame(cpg_per_kb=top_cpg, gc_fraction=top_gc),
+#            file="top_metrics_3.tsv", sep="\t", quote=FALSE, row.names=FALSE)
+#write.table(data.frame(cpg_per_kb=bg_cpg,  gc_fraction=bg_gc),
+#            file="bg_metrics_3.tsv",  sep="\t", quote=FALSE, row.names=FALSE)
+
+```
+
+
+#test if any overlapping in the background occurs:
+```{r}
+suppressPackageStartupMessages({
+  library(rtracklayer)
+  library(GenomicRanges)
+  library(BSgenome.Mmusculus.UCSC.mm10)
+  library(GenomeInfoDb)
+})
+
+mm10 <- BSgenome.Mmusculus.UCSC.mm10
+
+read_bed3 <- function(path) {
+  gr <- import(path, format = "BED")
+  seqlevelsStyle(gr) <- "UCSC"
+  gr <- keepStandardChromosomes(gr, pruning.mode = "coarse")
+  seqlengths(gr) <- seqlengths(mm10)[seqlevels(gr)]
+  gr
+}
+
+# ---- change this path to your BG file ----
+bg <- read_bed3("Dnmt1.top30k.bg_matched.mm10.bed")
+
+# all overlaps within BG (ignore strand)
+ov <- findOverlaps(bg, bg, ignore.strand = TRUE)
+
+# drop self-hits and duplicate pairs (i<j keeps each pair once)
+keep <- queryHits(ov) < subjectHits(ov)
+ov <- ov[keep]
+
+n_overlap_pairs <- length(ov)                        # number of overlapping pairs
+idx_involved     <- unique(c(queryHits(ov), subjectHits(ov)))
+n_regions_involved <- length(idx_involved)           # number of regions that overlap at least one other
+fraction_regions_involved <- n_regions_involved / length(bg)
+
+cat(sprintf("Overlapping pairs: %d\n", n_overlap_pairs))
+cat(sprintf("Regions involved: %d / %d (%.3f)\n",
+            n_regions_involved, length(bg), fraction_regions_involved))
+
+# optional: save the overlapping regions for inspection
+if (n_regions_involved > 0) {
+  export(bg[idx_involved], "bg_overlapping_regions.bed", format = "BED")
+  cat("Wrote overlapping regions to: bg_overlapping_regions.bed\n")
+}
+
+```
+
